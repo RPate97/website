@@ -2,7 +2,7 @@
 const siteMetadata = {
   title: 'Pates Blog',
   author: 'Ryan Pate',
-  headerTitle: 'PatesBlog',
+  headerTitle: 'Pates Blog',
   description: 'Somewhere to put my thoughts.',
   language: 'en-us',
   theme: 'dark', // system, dark or light

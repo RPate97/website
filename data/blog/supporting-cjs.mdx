@@ -1,0 +1,176 @@
+---
+title: 'Building NPM packages for CommonJS with ESM dependencies'
+date: '2025-07-15'
+tags: ['ai', 'opensource', 'npm', 'esm', 'commonjs']
+draft: false
+summary: A guide on how to make sure your NPM package supports CommonJS even if you have dependencies that are pure ESM.
+---
+
+## TLDR
+You have to use a bundler such as [esbuild](https://esbuild.github.io/) which will compile your project and bundle all of it's dependencies along with it so they do not
+need to be imported. This bypasses the ESM/CommonJS incompatibility issue.
+
+If you're impatient, you can [go straight to the code with this example implementation](https://github.com/RPate97/esm-commonjs-support).
+
+## Context 
+While preparing to release my new project [Token.js](https://github.com/token-js/token.js) over the weekend, I ran into a quite frustrating problem. 
+I wanted my package to support CommonJS in addition to ESM, but I had pure ESM dependencies. The pure ESM crusaders out there might be quite unhappy
+about me saying it, but if you're building an NPM package and want it to be widely used you still need to support CommonJS in 2024.
+
+> [Token.js](https://github.com/token-js/token.js) is a simple TypeScript SDK that allows you to integrate 60+ LLMs from 9 different providers (OpenAI,
+Anthropic, Cohere, etc). Shameless plug, check it out and let me know what you think if you're into generative ai.
+
+Now there are a number of resources online discussing how to build Javascript projects for ESM, CommonJS, or both. However, I specifically had trouble dealing with
+the fact that I had dependencies that were pure ESM. I found this quite difficult to deal with because I'm not familiar with bundlers (I've mostly worked on webapp backends),
+and was not able to find a good guide on the topic.
+
+So if anyone else is running into this issue, here's the solution.
+
+## Guide
+
+### Install esbuild
+We'll be using [esbuild](https://stackoverflow.com/questions/74937600/how-to-support-es-modules-and-commonjs-modules-at-the-same-time) for the bundler. 
+```bash
+yarn add esbuild --save-dev
+```
+
+### Create a build script
+We'll need a simple build script to run esbuild and output the results.
+```JavaScript
+import esbuild from 'esbuild'
+
+const entrypoint = "<your entrypoint here>"
+const tsconfig = "<your tsconfig path here>"
+
+const build = async () => {
+  await Promise.all([
+    // bundle for commonjs
+    esbuild.build({
+      entryPoints: [entrypoint],
+      bundle: true,
+      minify: true,
+      format: 'cjs',
+      outfile: `./dist/index.cjs`,
+      platform: 'node',
+      treeShaking: true,
+      tsconfig,
+    }),
+  ])
+}
+
+build()
+```
+
+### Add a build script to your package.json
+Run with your preferred runtime.
+```json
+"scripts": {
+  "build": "vite-node ./scripts/build.ts",
+}
+```
+
+I personally love [vite-node](https://www.npmjs.com/package/vite-node). So if you want to follow along exactly, you'll need to install that:
+```bash
+yarn add vite-node --save-dev
+```
+
+### Build your project
+```bash
+yarn build
+```
+
+This will cause build your project with esbuild and you'll see a new file, `dist/index.cjs`, which is the CommonJS build of your package.
+
+### Configure entrypoint
+
+Update your package.json to point to your CommonJS entrypoint.
+```json
+"main": "dist/index.cjs",
+```
+
+Bam! There you go, you've now built your package for CommonJS. This will work even if you have ESM dependencies because the dependencies will be bundled
+along with your package.
+
+> The dependencies are included in the output because of the field `bundle: true` when `esbuild` is called.
+
+## TypeScript declarations
+Though technically not required, you will very likely also want TypeScript declarations which esbuild unfortunately does not output at this time. So to generate
+those, you'll want to use normal `tsc`.
+
+### Update your `tsconfig.json`
+
+Adding these options to your `tsconfig.json` file will cause only the TypeScript declarations to be output. This is exactly what we want since the rest of the package
+is being built with `esbuild`. 
+```json
+"declaration": true,
+"declarationDir": "./dist",
+"emitDeclarationOnly": true
+```
+
+### Update your build script
+```json
+"scripts": {
+  "build:tsc": "yarn tsc -p tsconfig.json",
+  "build": "vite-node ./scripts/build.ts && yarn build:tsc",
+}
+```
+
+## Dual Entrypoints
+This guide recommends only outputting a single CommonJS entrypoint for your package. Personally, I think this is the best option for two reasons:
+- Minimizes the bundle size
+- Avoids [dual package hazard](https://nodejs.org/api/packages.html#dual-package-hazard)
+
+However, this is not the only option. You could also publish your package with dual entrypoints for CommonJS and ESM. 
+
+### To do so, you would just update your build script to also output an ESM build
+```JavaScript
+import esbuild from 'esbuild'
+
+const entrypoint = "<your entrypoint here>"
+const tsconfig = "<your tsconfig path here>"
+
+const build = async () => {
+  await Promise.all([
+    // bundle for commonjs
+    esbuild.build({
+      entryPoints: [entrypoint],
+      bundle: true,
+      minify: true,
+      format: 'cjs',
+      outfile: `./dist/index.cjs`,
+      platform: 'node',
+      treeShaking: true,
+      tsconfig,
+    }),
+    // bundle for ESM
+    esbuild.build({
+      entryPoints: [entrypoint],
+      bundle: true,
+      minify: true,
+      format: 'esm',
+      outfile: `./dist/index.js`,
+      platform: 'node',
+      treeShaking: true,
+      tsconfig,
+    }),
+  ])
+}
+
+build()
+```
+
+### Then update your package.json file to include both entrypoints
+```json
+"main": "dist/index.cjs",
+"module": "dist/index.js",
+"type": "module",
+"exports": {
+  ".": {
+    "import": "./dist/index.js",
+    "require": "./dist/index.cjs",
+    "types": "./dist/index.d.ts"
+  }
+},
+```
+
+## Redundant Dependencies
